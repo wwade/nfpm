@@ -9,6 +9,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/goreleaser/nfpm/internal/files"
 	"io"
 	"io/ioutil"
 	"os"
@@ -62,12 +63,10 @@ func exampleInfo() *nfpm.Info {
 			Conflicts: []string{
 				"zsh",
 			},
-			Files: map[string]string{
-				"../testdata/fake":          "/usr/local/bin/fake",
-				"../testdata/whatever.conf": "/usr/share/doc/fake/fake.txt",
-			},
-			ConfigFiles: map[string]string{
-				"../testdata/whatever.conf": "/etc/fake/fake.conf",
+			Files: []*files.FileToCopy{
+				{"../testdata/fake", "/usr/local/bin/fake", "", 0},
+				{"../testdata/whatever.conf", "/usr/share/doc/fake/fake.txt", "", 0},
+				{"../testdata/whatever.conf", "/etc/fake/fake.conf", "config", 0},
 			},
 			EmptyFolders: []string{
 				"/var/log/whatever",
@@ -237,8 +236,7 @@ func TestNoJoinsControl(t *testing.T) {
 				Replaces:    []string{},
 				Provides:    []string{},
 				Conflicts:   []string{},
-				Files:       map[string]string{},
-				ConfigFiles: map[string]string{},
+				Files:       []*files.FileToCopy{},
 			},
 		}),
 		InstalledSize: 10,
@@ -268,11 +266,9 @@ func TestDebFileDoesNotExist(t *testing.T) {
 				Depends: []string{
 					"bash",
 				},
-				Files: map[string]string{
-					"../testdata/fake": "/usr/local/bin/fake",
-				},
-				ConfigFiles: map[string]string{
-					"../testdata/whatever.confzzz": "/etc/fake/fake.conf",
+				Files: []*files.FileToCopy{
+					{"../testdata/fake", "/usr/local/bin/fake","", 0},
+					{"../testdata/whatever.confzzz", "/etc/fake/fake.conf","config", 0},
 				},
 			},
 		}),
@@ -312,9 +308,12 @@ func TestDebNoInfo(t *testing.T) {
 func TestConffiles(t *testing.T) {
 	out := conffiles(&nfpm.Info{
 		Overridables: nfpm.Overridables{
-			ConfigFiles: map[string]string{
-				"fake": "/etc/fake",
-			},
+			Files: []*files.FileToCopy{{
+				"fake",
+				"/etc/fake",
+				"config",
+				0,
+			}},
 		},
 	})
 	assert.Equal(t, "/etc/fake\n", string(out), "should have a trailing empty line")
@@ -616,8 +615,8 @@ func TestSymlinkInFiles(t *testing.T) {
 		Description: "This package's config references a file via symlink.",
 		Version:     "1.0.0",
 		Overridables: nfpm.Overridables{
-			Files: map[string]string{
-				symlinkTo(t, symlinkTarget): packagedTarget,
+			Files: []*files.FileToCopy{
+				{symlinkTo(t, symlinkTarget), packagedTarget,"", 0},
 			},
 		},
 	}
@@ -647,11 +646,9 @@ func TestSymlink(t *testing.T) {
 		Description: "This package's config references a file via symlink.",
 		Version:     "1.0.0",
 		Overridables: nfpm.Overridables{
-			Files: map[string]string{
-				"../testdata/whatever.conf": configFilePath,
-			},
-			Symlinks: map[string]string{
-				symlink: symlinkTarget,
+			Files: []*files.FileToCopy{
+				{"../testdata/whatever.conf", configFilePath,"", 0},
+				{symlink, symlinkTarget, "symlink", 0},
 			},
 		},
 	}
@@ -669,8 +666,8 @@ func TestSymlink(t *testing.T) {
 
 func TestEnsureRelativePrefixInTarGzFiles(t *testing.T) {
 	info := exampleInfo()
-	info.Symlinks = map[string]string{
-		"/symlink/to/fake.txt": "/usr/share/doc/fake/fake.txt",
+	info.Files = []*files.FileToCopy{
+		{"/symlink/to/fake.txt", "/usr/share/doc/fake/fake.txt", "symlink", 0},
 	}
 	info.Changelog = "../testdata/changelog.yaml"
 
@@ -687,7 +684,7 @@ func TestMD5Sums(t *testing.T) {
 	info := exampleInfo()
 	info.Changelog = "../testdata/changelog.yaml"
 
-	nFiles := len(info.Files) + len(info.ConfigFiles) + 1 // +1 is the changelog
+	nFiles := len(info.Files) + 1 // +1 is the changelog
 
 	dataTarGz, md5sums, instSize, err := createDataTarGz(info)
 	require.NoError(t, err)
@@ -776,8 +773,8 @@ func TestDebsigsSignatureError(t *testing.T) {
 func TestDisableGlobbing(t *testing.T) {
 	info := exampleInfo()
 	info.DisableGlobbing = true
-	info.Files = map[string]string{
-		"../testdata/{file}[": "/test/{file}[",
+	info.Files = []*files.FileToCopy{
+		{"../testdata/{file}[", "/test/{file}[","", 0},
 	}
 
 	dataTarGz, _, _, err := createDataTarGz(info)

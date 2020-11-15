@@ -9,6 +9,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/goreleaser/nfpm/internal/files"
 	"io"
 	"io/ioutil"
 	"testing"
@@ -61,12 +62,25 @@ func exampleInfo() *nfpm.Info {
 				"zsh",
 				"foobarsh",
 			},
-			Files: map[string]string{
-				"../testdata/fake":          "/usr/local/bin/fake",
-				"../testdata/whatever.conf": "/usr/share/doc/fake/fake.txt",
-			},
-			ConfigFiles: map[string]string{
-				"../testdata/whatever.conf": "/etc/fake/fake.conf",
+			Files: []*files.FileToCopy{
+				{
+					"../testdata/fake",
+				"/usr/local/bin/fake",
+				"",
+				0,
+				},
+				{
+					"../testdata/whatever.conf",
+					"/usr/share/doc/fake/fake.txt",
+					"",
+					0,
+				},
+				{
+					"../testdata/whatever.conf",
+					"/etc/fake/fake.conf",
+					"config",
+					0,
+				},
 			},
 			EmptyFolders: []string{
 				"/var/log/whatever",
@@ -168,11 +182,19 @@ func TestFileDoesNotExist(t *testing.T) {
 				Depends: []string{
 					"bash",
 				},
-				Files: map[string]string{
-					"../testdata/fake": "/usr/local/bin/fake",
-				},
-				ConfigFiles: map[string]string{
-					"../testdata/whatever.confzzz": "/etc/fake/fake.conf",
+				Files: []*files.FileToCopy{
+					{
+						"../testdata/fake",
+						"/usr/local/bin/fake",
+						"",
+						0,
+					},
+					{
+						"../testdata/whatever.confzzz",
+						"/etc/fake/fake.conf",
+						"config",
+						0,
+					},
 				},
 			},
 		}),
@@ -305,8 +327,8 @@ func TestSignatureError(t *testing.T) {
 func TestDisableGlobbing(t *testing.T) {
 	info := exampleInfo()
 	info.DisableGlobbing = true
-	info.Files = map[string]string{
-		"../testdata/{file}[": "/test/{file}[",
+	info.Files = []*files.FileToCopy{
+		{"../testdata/{file}[", "/test/{file}[", "", 0},
 	}
 
 	size := int64(0)

@@ -52,9 +52,10 @@ import (
 	"github.com/goreleaser/nfpm/internal/sign"
 )
 
+const packagerName = "apk"
 // nolint: gochecknoinits
 func init() {
-	nfpm.Register("apk", Default)
+	nfpm.Register(packagerName, Default)
 }
 
 // nolint: gochecknoglobals
@@ -387,57 +388,51 @@ func createBuilderData(info *nfpm.Info, sizep *int64) func(tw *tar.Writer) error
 		}
 
 		// handle Files and ConfigFiles
-		if err := createFilesInsideTarGz(info, tw, created, sizep); err != nil {
-			return err
-		}
-
-		return createSymlinksInsideTarGz(info, tw, created)
+		return createFilesInsideTarGz(info, tw, created, sizep)
 	}
 }
 
 func createFilesInsideTarGz(info *nfpm.Info, tw *tar.Writer, created map[string]bool, sizep *int64) error {
-	filesToCopy, err := files.Expand(info.Files, info.DisableGlobbing)
+	filesToCopy, err := files.ExpandFiles(info.Files, info.DisableGlobbing)
 	if err != nil {
 		return err
 	}
 
-	configFilesToCopy, err := files.Expand(info.ConfigFiles, info.DisableGlobbing)
-	if err != nil {
-		return err
-	}
+	for _, file := range filesToCopy {
+		if file.Packager != "" || file.Packager != packagerName {
+			continue
+		}
 
-	for _, file := range append(filesToCopy, configFilesToCopy...) {
 		if err = createTree(tw, file.Destination, created); err != nil {
 			return err
 		}
-		err := copyToTarAndDigest(file.Source, file.Destination, tw, sizep, created)
+
+		switch file.Type {
+		case "symlink":
+			err = createSymlinkInsideTarGz(file, tw)
+		case "ghost":
+			continue
+		default:
+			err = copyToTarAndDigest(file.Source, file.Destination, tw, sizep, created)
+		}
+
 		if err != nil {
 			return err
 		}
+		created[file.Source] = true
 	}
 
 	return nil
 }
 
-func createSymlinksInsideTarGz(info *nfpm.Info, out *tar.Writer, created map[string]bool) error {
-	for src, dst := range info.Symlinks {
-		if err := createTree(out, src, created); err != nil {
-			return err
-		}
-
-		err := newItemInsideTarGz(out, []byte{}, &tar.Header{
-			Name:     strings.TrimLeft(src, "/"),
-			Linkname: dst,
+func createSymlinkInsideTarGz(file *files.FileToCopy, out *tar.Writer) error {
+	return newItemInsideTarGz(out, []byte{}, &tar.Header{
+			Name:     strings.TrimLeft(file.Source, "/"),
+			Linkname: file.Destination,
 			Typeflag: tar.TypeSymlink,
 			ModTime:  time.Now(),
 			Format:   tar.FormatGNU,
 		})
-		if err != nil {
-			return err
-		}
-	}
-
-	return nil
 }
 
 func copyToTarAndDigest(src, dst string, tw *tar.Writer, sizep *int64, created map[string]bool) error {

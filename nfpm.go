@@ -6,6 +6,7 @@ package nfpm
 
 import (
 	"fmt"
+	"github.com/goreleaser/nfpm/internal/files"
 	"io"
 	"os"
 	"sync"
@@ -13,7 +14,7 @@ import (
 	"github.com/Masterminds/semver/v3"
 	"github.com/goreleaser/chglog"
 	"github.com/imdario/mergo"
-	"gopkg.in/yaml.v2"
+	"gopkg.in/yaml.v3"
 )
 
 // nolint: gochecknoglobals
@@ -50,7 +51,7 @@ func Get(format string) (Packager, error) {
 // Parse decodes YAML data from an io.Reader into a configuration struct.
 func Parse(in io.Reader) (config Config, err error) {
 	dec := yaml.NewDecoder(in)
-	dec.SetStrict(true)
+	//dec.SetStrict(true)
 	if err = dec.Decode(&config); err != nil {
 		return
 	}
@@ -113,6 +114,51 @@ func (c *Config) Get(format string) (info *Info, err error) {
 		return nil, fmt.Errorf("failed to merge config into info: %w", err)
 	}
 	override, ok := c.Overrides[format]
+	if len(override.ConfigFiles) > 0{
+		for dst, src := range override.ConfigFiles {
+			override.Files = append(override.Files, &files.FileToCopy{
+				Destination: dst,
+				Source: src,
+				Type: "config",
+				Packager: format,
+			})
+		}
+		override.ConfigFiles = nil
+	}
+	if len(override.Symlinks) > 0{
+		for dst, src := range override.Symlinks {
+			override.Files = append(override.Files, &files.FileToCopy{
+				Destination: dst,
+				Source: src,
+				Type: "symlink",
+				Packager: format,
+			})
+		}
+		override.Symlinks = nil
+	}
+	if format == "rpm" {
+		if len(override.RPM.ConfigNoReplaceFiles) > 0 {
+			for dst, src := range override.RPM.ConfigNoReplaceFiles {
+				override.Files = append(override.Files, &files.FileToCopy{
+					Destination: dst,
+					Source:      src,
+					Type:        "config|noreplace",
+					Packager:    format,
+				})
+			}
+			override.RPM.ConfigNoReplaceFiles = nil
+		}
+		if len(override.RPM.GhostFiles) > 0 {
+			for _, dst := range override.RPM.GhostFiles {
+				override.Files = append(override.Files, &files.FileToCopy{
+					Destination: dst,
+					Type:        "ghost",
+					Packager:    format,
+				})
+			}
+			override.RPM.GhostFiles = nil
+		}
+	}
 	if !ok {
 		// no overrides
 		return info, nil
@@ -165,14 +211,71 @@ type Overridables struct {
 	Recommends   []string          `yaml:"recommends,omitempty"`
 	Suggests     []string          `yaml:"suggests,omitempty"`
 	Conflicts    []string          `yaml:"conflicts,omitempty"`
-	Files        map[string]string `yaml:"files,omitempty"`
-	ConfigFiles  map[string]string `yaml:"config_files,omitempty"`
-	Symlinks     map[string]string `yaml:"symlinks,omitempty"`
+	Files        []*files.FileToCopy `yaml:"files,omitempty"`
 	EmptyFolders []string          `yaml:"empty_folders,omitempty"`
 	Scripts      Scripts           `yaml:"scripts,omitempty"`
 	RPM          RPM               `yaml:"rpm,omitempty"`
 	Deb          Deb               `yaml:"deb,omitempty"`
 	APK          APK               `yaml:"apk,omitempty"`
+
+	// depreciated, only here for people using as a lib
+	ConfigFiles  map[string]string `yaml:"config_files,omitempty"`
+	Symlinks     map[string]string `yaml:"symlinks,omitempty"`
+}
+// so we do not loops on decoding the same type
+type tmpO Overridables
+type oldOverridables struct {
+	Files map[string]string `yaml:"files,omitempty"`
+	ConfigFiles  map[string]string `yaml:"config_files,omitempty"`
+	Symlinks     map[string]string `yaml:"symlinks,omitempty"`
+	// https://www.cl.cam.ac.uk/~jw35/docs/rpm_config.html
+	ConfigNoReplaceFiles map[string]string `yaml:"config_noreplace_files,omitempty"`
+	GhostFiles           []string          `yaml:"ghost_files,omitempty"`
+}
+func (f *Overridables) UnmarshalYAML(value *yaml.Node) error {
+	var tmp oldOverridables
+	if err := value.Decode(&tmp); err != nil {
+		var tmp0 tmpO
+		err = value.Decode(&tmp0)
+		*f = Overridables(tmp0)
+		return err
+	}
+	for dst, src := range tmp.Files {
+		f.Files = append(f.Files, &files.FileToCopy{
+			Destination: dst,
+			Source: src,
+		})
+	}
+	for dst, src := range tmp.ConfigFiles {
+		f.ConfigFiles = nil
+		f.Files = append(f.Files, &files.FileToCopy{
+			Destination: dst,
+			Source: src,
+			Type: "config",
+		})
+	}
+	for dst, src := range tmp.Symlinks {
+		f.Symlinks = nil
+		f.Files = append(f.Files, &files.FileToCopy{
+			Destination: dst,
+			Source: src,
+			Type: "symlink",
+		})
+	}
+	for dst, src := range tmp.ConfigNoReplaceFiles {
+		f.Files = append(f.Files, &files.FileToCopy{
+			Destination: dst,
+			Source: src,
+			Type: "config|noreplace",
+		})
+	}
+	for _, dst := range tmp.GhostFiles {
+		f.Files = append(f.Files, &files.FileToCopy{
+			Destination: dst,
+			Type: "ghost",
+		})
+	}
+	return nil
 }
 
 // RPM is custom configs that are only available on RPM packages.
@@ -180,9 +283,11 @@ type RPM struct {
 	Group       string `yaml:"group,omitempty"`
 	Summary     string `yaml:"summary,omitempty"`
 	Compression string `yaml:"compression,omitempty"`
+	Signature            RPMSignature      `yaml:"signature,omitempty"`
+
+	// depreciated, only here for people using as a lib
 	// https://www.cl.cam.ac.uk/~jw35/docs/rpm_config.html
 	ConfigNoReplaceFiles map[string]string `yaml:"config_noreplace_files,omitempty"`
-	Signature            RPMSignature      `yaml:"signature,omitempty"`
 	GhostFiles           []string          `yaml:"ghost_files,omitempty"`
 }
 

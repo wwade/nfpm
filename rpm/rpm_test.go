@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"github.com/goreleaser/nfpm/internal/files"
 	"io"
 	"io/ioutil"
 	"os"
@@ -55,11 +56,19 @@ func exampleInfo() *nfpm.Info {
 			Conflicts: []string{
 				"zsh",
 			},
-			Files: map[string]string{
-				"../testdata/fake": "/usr/local/bin/fake",
-			},
-			ConfigFiles: map[string]string{
-				"../testdata/whatever.conf": "/etc/fake/fake.conf",
+			Files: []*files.FileToCopy{
+				{
+					"../testdata/fake",
+					"/usr/local/bin/fake",
+					"",
+					0,
+				},
+				{
+					"../testdata/whatever.conf",
+					"/etc/fake/fake.conf",
+					"config",
+					0,
+				},
 			},
 			EmptyFolders: []string{
 				"/var/log/whatever",
@@ -358,11 +367,19 @@ echo "Postremove" > /dev/null
 
 func TestRPMFileDoesNotExist(t *testing.T) {
 	info := exampleInfo()
-	info.Files = map[string]string{
-		"../testdata/fake": "/usr/local/bin/fake",
-	}
-	info.ConfigFiles = map[string]string{
-		"../testdata/whatever.confzzz": "/etc/fake/fake.conf",
+	info.Files = []*files.FileToCopy{
+		{
+			"../testdata/fake",
+			"/usr/local/bin/fake",
+			"",
+			0,
+		},
+		{
+			"../testdata/whatever.confzzz",
+			"/etc/fake/fake.conf",
+			"config",
+			0,
+		},
 	}
 	var err = Default.Package(info, ioutil.Discard)
 	assert.EqualError(t, err, "matching \"../testdata/whatever.confzzz\": file does not exist")
@@ -526,9 +543,12 @@ func TestSymlinkInFiles(t *testing.T) {
 		Description: "This package's config references a file via symlink.",
 		Version:     "1.0.0",
 		Overridables: nfpm.Overridables{
-			Files: map[string]string{
-				symlinkTo(t, symlinkTarget): packagedTarget,
-			},
+			Files: []*files.FileToCopy{{
+				symlinkTo(t, symlinkTarget),
+				packagedTarget,
+				"",
+				0,
+			}},
 		},
 	}
 
@@ -558,11 +578,19 @@ func TestSymlink(t *testing.T) {
 		Description: "This package's config references a file via symlink.",
 		Version:     "1.0.0",
 		Overridables: nfpm.Overridables{
-			Files: map[string]string{
-				"../testdata/whatever.conf": configFilePath,
-			},
-			Symlinks: map[string]string{
-				symlink: symlinkTarget,
+			Files: []*files.FileToCopy{
+				{
+					"../testdata/whatever.conf",
+					configFilePath,
+					"",
+					0,
+				},
+				{
+					symlink,
+					symlinkTarget,
+					"symlink",
+					0,
+				},
 			},
 		},
 	}
@@ -646,8 +674,13 @@ func TestRPMGhostFiles(t *testing.T) {
 func TestDisableGlobbing(t *testing.T) {
 	info := exampleInfo()
 	info.DisableGlobbing = true
-	info.Files = map[string]string{
-		"../testdata/{file}[": "/test/{file}[",
+	info.Files = []*files.FileToCopy{
+		{
+			"../testdata/{file}[",
+			"/test/{file}[",
+			"",
+			0,
+		},
 	}
 
 	var rpmFileBuffer bytes.Buffer

@@ -2,6 +2,7 @@ package nfpm
 
 import (
 	"fmt"
+	"github.com/goreleaser/nfpm/internal/files"
 	"io"
 	"os"
 	"reflect"
@@ -98,8 +99,13 @@ func TestValidate(t *testing.T) {
 		Arch:    "asd",
 		Version: "1.2.3",
 		Overridables: Overridables{
-			Files: map[string]string{
-				"asa": "asd",
+			Files: []*files.FileToCopy{
+				{
+					"asa",
+					"asd",
+					"",
+					0,
+				},
 			},
 		},
 	}))
@@ -108,8 +114,13 @@ func TestValidate(t *testing.T) {
 		Arch:    "asd",
 		Version: "1.2.3",
 		Overridables: Overridables{
-			ConfigFiles: map[string]string{
-				"asa": "asd",
+			Files: []*files.FileToCopy{
+				{
+					"asa",
+					"asd",
+					"config",
+					0,
+				},
 			},
 		},
 	}))
@@ -148,6 +159,19 @@ func TestParseFile(t *testing.T) {
 	config, err := ParseFile("./testdata/versionenv.yaml")
 	require.NoError(t, err)
 	assert.Equal(t, fmt.Sprintf("v%s", os.Getenv("GOROOT")), config.Version)
+}
+
+func TestParseEnhancedFile(t *testing.T) {
+	config, err := ParseFile("./testdata/files_enhanced.yaml")
+	require.NoError(t, err)
+	for _, f := range config.Files {
+		fmt.Printf("%+#v\n", f)
+	}
+	config, err = ParseFile("./testdata/files_old.yaml")
+	require.NoError(t, err)
+	for _, f := range config.Files {
+		fmt.Printf("%+#v\n", f)
+	}
 }
 
 func TestOptionsFromEnvironment(t *testing.T) {
@@ -212,9 +236,9 @@ func TestOverrides(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, deb.Depends, "deb_depend")
 	assert.NotContains(t, deb.Depends, "rpm_depend")
-	assert.Contains(t, deb.ConfigFiles, "deb.conf")
-	assert.NotContains(t, deb.ConfigFiles, "rpm.conf")
-	assert.Contains(t, deb.ConfigFiles, "whatever.conf")
+	assert.Contains(t, deb.Files, "deb.conf")
+	assert.NotContains(t, deb.Files, "rpm.conf")
+	assert.Contains(t, deb.Files, "whatever.conf")
 	assert.Equal(t, "amd64", deb.Arch)
 
 	// rpm overrides
@@ -222,9 +246,9 @@ func TestOverrides(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, rpm.Depends, "rpm_depend")
 	assert.NotContains(t, rpm.Depends, "deb_depend")
-	assert.Contains(t, rpm.ConfigFiles, "rpm.conf")
-	assert.NotContains(t, rpm.ConfigFiles, "deb.conf")
-	assert.Contains(t, rpm.ConfigFiles, "whatever.conf")
+	assert.Contains(t, rpm.Files, "rpm.conf")
+	assert.NotContains(t, rpm.Files, "deb.conf")
+	assert.Contains(t, rpm.Files, "whatever.conf")
 	assert.Equal(t, "amd64", rpm.Arch)
 
 	// no overrides

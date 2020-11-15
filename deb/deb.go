@@ -24,9 +24,10 @@ import (
 	"github.com/goreleaser/nfpm/internal/sign"
 )
 
+const packagerName = "deb"
 // nolint: gochecknoinits
 func init() {
-	nfpm.Register("deb", Default)
+	nfpm.Register("packagerName", Default)
 }
 
 // nolint: gochecknoglobals
@@ -179,10 +180,6 @@ func createDataTarGz(info *nfpm.Info) (dataTarGz, md5sums []byte, instSize int64
 		return nil, nil, 0, err
 	}
 
-	if err := createSymlinksInsideTarGz(info, out, created); err != nil {
-		return nil, nil, 0, err
-	}
-
 	if err := out.Close(); err != nil {
 		return nil, nil, 0, fmt.Errorf("closing data.tar.gz: %w", err)
 	}
@@ -193,54 +190,45 @@ func createDataTarGz(info *nfpm.Info) (dataTarGz, md5sums []byte, instSize int64
 	return buf.Bytes(), md5buf.Bytes(), instSize, nil
 }
 
-func createSymlinksInsideTarGz(info *nfpm.Info, out *tar.Writer, created map[string]bool) error {
-	for src, dst := range info.Symlinks {
-		if err := createTree(out, src, created); err != nil {
-			return err
-		}
-
-		err := newItemInsideTarGz(out, []byte{}, &tar.Header{
-			Name:     normalizePath(src),
-			Linkname: dst,
+func createSymlinkInsideTarGz(file *files.FileToCopy, out *tar.Writer) error {
+		return newItemInsideTarGz(out, []byte{}, &tar.Header{
+			Name:     normalizePath(file.Source),
+			Linkname: file.Destination,
 			Typeflag: tar.TypeSymlink,
 			ModTime:  time.Now(),
 			Format:   tar.FormatGNU,
 		})
-		if err != nil {
-			return err
-		}
-	}
-
-	return nil
 }
 
 func createFilesInsideTarGz(info *nfpm.Info, out *tar.Writer, created map[string]bool) (bytes.Buffer, int64, error) {
 	var md5buf bytes.Buffer
 	var instSize int64
 
-	filesToCopy, err := files.Expand(info.Files, info.DisableGlobbing)
+	filesToCopy, err := files.ExpandFiles(info.Files, info.DisableGlobbing)
 	if err != nil {
 		return md5buf, 0, err
 	}
-
-	configFiles, err := files.Expand(info.ConfigFiles, info.DisableGlobbing)
-	if err != nil {
-		return md5buf, 0, err
-	}
-
-	filesToCopy = append(filesToCopy, configFiles...)
 
 	for _, file := range filesToCopy {
+		if file.Packager != "" || file.Packager != packagerName {
+			continue
+		}
 		if err = createTree(out, file.Destination, created); err != nil {
 			return md5buf, 0, err
 		}
-
-		var size int64 // declare early to avoid shadowing err
-		size, err = copyToTarAndDigest(out, &md5buf, file.Source, file.Destination)
-		if err != nil {
-			return md5buf, 0, err
+		switch file.Type {
+		case "symlink":
+			err = createSymlinkInsideTarGz(file, out)
+		case "ghost":
+			continue
+		default:
+			var size int64 // declare early to avoid shadowing err
+			size, err = copyToTarAndDigest(out, &md5buf, file.Source, file.Destination)
+			if err != nil {
+				return md5buf, 0, err
+			}
+			instSize += size
 		}
-		instSize += size
 	}
 
 	if info.Changelog != "" {
@@ -551,8 +539,14 @@ func pathsToCreate(dst string) []string {
 func conffiles(info *nfpm.Info) []byte {
 	// nolint: prealloc
 	var confs []string
-	for _, dst := range info.ConfigFiles {
-		confs = append(confs, dst)
+	for _, file := range info.Files {
+		if file.Packager != "" || file.Packager != packagerName {
+			continue
+		}
+		switch file.Type {
+		case "config", "config|noreplace":
+			confs = append(confs, file.Destination)
+		}
 	}
 	return []byte(strings.Join(confs, "\n") + "\n")
 }

@@ -1,4 +1,4 @@
-package files
+package files_test
 
 import (
 	"testing"
@@ -7,50 +7,47 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/goreleaser/nfpm"
+	"github.com/goreleaser/nfpm/internal/files"
 )
 
 func TestListFilesToCopy(t *testing.T) {
 	info := &nfpm.Info{
 		Overridables: nfpm.Overridables{
-			ConfigFiles: map[string]string{
-				"../../testdata/whatever.conf": "/whatever",
-			},
-			Files: map[string]string{
-				"../../testdata/scripts/*": "/test",
+			Files: []*files.FileToCopy{
+				{"../../testdata/scripts/*", "/test","", 0},
+				{"../../testdata/whatever.conf", "/whatever","config", 0},
 			},
 		},
 	}
 
-	regularFiles, err := Expand(info.Files, info.DisableGlobbing)
-	require.NoError(t, err)
-
-	configFiles, err := Expand(info.ConfigFiles, info.DisableGlobbing)
+	regularFiles, err := files.ExpandFiles(info.Files, info.DisableGlobbing)
 	require.NoError(t, err)
 
 	// all the input files described in the config in sorted order by source path
-	require.Equal(t, []FileToCopy{
-		{"../../testdata/scripts/postinstall.sh", "/test/postinstall.sh"},
-		{"../../testdata/scripts/postremove.sh", "/test/postremove.sh"},
-		{"../../testdata/scripts/preinstall.sh", "/test/preinstall.sh"},
-		{"../../testdata/scripts/preremove.sh", "/test/preremove.sh"},
+	require.Equal(t, []*files.FileToCopy{
+		{"../../testdata/scripts/postinstall.sh", "/test/postinstall.sh", "", 0},
+		{"../../testdata/scripts/postremove.sh", "/test/postremove.sh", "", 0},
+		{"../../testdata/scripts/preinstall.sh", "/test/preinstall.sh", "", 0},
+		{"../../testdata/scripts/preremove.sh", "/test/preremove.sh", "", 0},
 	}, regularFiles)
 
-	require.Equal(t, []FileToCopy{
-		{"../../testdata/whatever.conf", "/whatever"},
-	}, configFiles)
+	require.Equal(t, []*files.FileToCopy{
+		{"../../testdata/scripts/*", "/test","", 0},
+		{"../../testdata/whatever.conf", "/whatever","config", 0},
+	}, regularFiles)
 }
 
 func TestListFilesToCopyWithAndWithoutGlobbing(t *testing.T) {
-	_, err := Expand(map[string]string{
+	_, err := files.Expand(map[string]string{
 		"../../testdata/{file}*": "/test/{file}[",
 	}, false)
 	assert.EqualError(t, err, "glob failed: ../../testdata/{file}*: no matching files")
 
-	files, err := Expand(map[string]string{
+	mappedFiles, err := files.Expand(map[string]string{
 		"../../testdata/{file}[": "/test/{file}[",
 	}, true)
 	require.NoError(t, err)
-	assert.Equal(t, []FileToCopy{
-		{"../../testdata/{file}[", "/test/{file}["},
-	}, files)
+	assert.Equal(t, []*files.FileToCopy{
+		{"../../testdata/{file}[", "/test/{file}[", "", 0},
+	}, mappedFiles)
 }

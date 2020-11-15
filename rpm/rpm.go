@@ -37,11 +37,12 @@ const (
 {{- range $i,$n := (rest $note) }}{{- if ne (trim $n) ""}}
 {{$n}}{{end}}
 {{- end}}{{- end}}`
+	packagerName = "rpm"
 )
 
 // nolint: gochecknoinits
 func init() {
-	nfpm.Register("rpm", Default)
+	nfpm.Register(packagerName, Default)
 }
 
 // Default RPM packager
@@ -106,8 +107,6 @@ func (*RPM) Package(info *nfpm.Info, w io.Writer) error {
 	if err = createFilesInsideRPM(info, rpm); err != nil {
 		return err
 	}
-
-	addSymlinksInsideRPM(info, rpm)
 
 	if err = addScriptFiles(info, rpm); err != nil {
 		return err
@@ -314,63 +313,53 @@ func addEmptyDirsRPM(info *nfpm.Info, rpm *rpmpack.RPM) {
 }
 
 func createFilesInsideRPM(info *nfpm.Info, rpm *rpmpack.RPM) error {
-	regularFiles, err := files.Expand(info.Files, info.DisableGlobbing)
+	regularFiles, err := files.ExpandFiles(info.Files, info.DisableGlobbing)
 	if err != nil {
 		return err
 	}
 
+	var symlinks []*files.FileToCopy
 	for _, file := range regularFiles {
-		err = copyToRPM(rpm, file.Source, file.Destination, rpmpack.GenericFile)
+		if file.Packager != "" || file.Packager != packagerName {
+			continue
+		}
+		var rpmFileType rpmpack.FileType
+		switch file.Type {
+		case "config":
+			rpmFileType = rpmpack.ConfigFile
+		case "config|noreplace":
+			rpmFileType = rpmpack.ConfigFile|rpmpack.NoReplaceFile
+		case "ghost":
+			rpmFileType = rpmpack.GhostFile
+			if file.Mode == 0 {
+				file.Mode = 0644
+			}
+		case "doc":
+			rpmFileType = rpmpack.DocFile
+		case "licence", "license":
+			rpmFileType = rpmpack.LicenceFile
+		case "readme":
+			rpmFileType = rpmpack.ReadmeFile
+		case "symlink":
+			symlinks = append(symlinks, file)
+			continue
+		default:
+			rpmFileType = rpmpack.GenericFile
+		}
+		err = copyToRPM(rpm, file, rpmFileType)
 		if err != nil {
 			return err
 		}
-	}
-
-	configFiles, err := files.Expand(info.ConfigFiles, info.DisableGlobbing)
-	if err != nil {
-		return err
-	}
-
-	for _, file := range configFiles {
-		err = copyToRPM(rpm, file.Source, file.Destination, rpmpack.ConfigFile)
-		if err != nil {
-			return err
-		}
-	}
-
-	configNoReplaceFiles, err := files.Expand(info.RPM.ConfigNoReplaceFiles, info.DisableGlobbing)
-	if err != nil {
-		return err
-	}
-
-	for _, file := range configNoReplaceFiles {
-		err = copyToRPM(rpm, file.Source, file.Destination, rpmpack.ConfigFile|rpmpack.NoReplaceFile)
-		if err != nil {
-			return err
-		}
-	}
-
-	// note: the ghost files will be created as empty files when the package is installed, which is not
-	// correct: https://github.com/google/rpmpack/issues/51
-	for _, destName := range info.RPM.GhostFiles {
-		rpm.AddFile(rpmpack.RPMFile{
-			Name:  destName,
-			Mode:  0644,
-			MTime: uint32(time.Now().UTC().Unix()),
-			Owner: "root",
-			Group: "root",
-			Type:  rpmpack.GhostFile,
-		})
 	}
 
 	return nil
 }
 
-func addSymlinksInsideRPM(info *nfpm.Info, rpm *rpmpack.RPM) {
-	for src, dst := range info.Symlinks {
+func addSymlinksInsideRPM(symlinks []*files.FileToCopy, rpm *rpmpack.RPM) {
+	for _, file := range symlinks {
 		rpm.AddFile(rpmpack.RPMFile{
-			Name:  src,
-			Body:  []byte(dst),
+			Name:  file.Source,
+			Body:  []byte(file.Destination),
 			Mode:  uint(cpio.S_ISLNK),
 			MTime: uint32(time.Now().UTC().Unix()),
 			Owner: "root",
@@ -379,25 +368,35 @@ func addSymlinksInsideRPM(info *nfpm.Info, rpm *rpmpack.RPM) {
 	}
 }
 
-func copyToRPM(rpm *rpmpack.RPM, src, dst string, fileType rpmpack.FileType) error {
-	info, err := os.Stat(src)
-	if err != nil {
-		return err
-	}
-	if info.IsDir() {
-		// TODO: this should probably return an error
-		return nil
-	}
-	data, err := ioutil.ReadFile(src)
-	if err != nil {
-		return err
-	}
+func copyToRPM(rpm *rpmpack.RPM, file *files.FileToCopy, fileType rpmpack.FileType) (err error) {
+	var (
+		data []byte
+		modTime uint32
+	)
+	if file.Source != "" {
+		info, err := os.Stat(file.Source)
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			// TODO: this should probably return an error
+			return nil
+		}
+		data, err = ioutil.ReadFile(file.Source)
+		if err != nil {
+			return err
+		}
 
+		if file.Mode == 0 {
+			file.Mode = uint(info.Mode())
+		}
+		modTime = uint32(info.ModTime().Unix())
+	}
 	rpm.AddFile(rpmpack.RPMFile{
-		Name:  dst,
+		Name:  file.Destination,
 		Body:  data,
-		Mode:  uint(info.Mode()),
-		MTime: uint32(info.ModTime().Unix()),
+		Mode:  file.Mode ,
+		MTime: modTime,
 		Owner: "root",
 		Group: "root",
 		Type:  fileType,
